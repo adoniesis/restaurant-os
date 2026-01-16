@@ -1,0 +1,371 @@
+// This is your Prisma schema file for RestaurantOS
+// Multi-tenant architecture using Row Level Security pattern
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// PUBLIC SCHEMA - Shared across all tenants
+// ============================================
+
+model Tenant {
+  id                  String   @id @default(cuid())
+  name                String
+  subdomain           String   @unique
+  slug                String   @unique
+  logo                String?
+  primaryColor        String   @default("#2563eb")
+  secondaryColor      String   @default("#64748b")
+  
+  // Contact info
+  email               String?
+  phone               String?
+  whatsappNumber      String?
+  address             String?
+  city                String?
+  
+  // Business info
+  businessType        String?  // restaurant, fast_food, pizzeria, bakery, coffee_shop
+  description         String?
+  
+  // Subscription
+  plan                String   @default("basic") // basic, professional, enterprise
+  status              String   @default("trial") // trial, active, suspended, cancelled
+  subscriptionEndDate DateTime?
+  monthlyOrderLimit   Int      @default(200)
+  
+  // Operating hours (JSON)
+  operatingHours      Json?    // { monday: { open: "08:00", close: "22:00" }, ... }
+  
+  // Delivery config
+  deliveryRadius      Int      @default(5) // km
+  deliveryBaseCost    Decimal  @default(0) @db.Decimal(10, 2)
+  freeDeliveryMinimum Decimal? @db.Decimal(10, 2)
+  
+  // Payment config
+  nequiNumber         String?
+  daviplataNumber     String?
+  bancolombiaAccount  String?
+  wompiPublicKey      String?
+  wompiPrivateKey     String?
+  acceptCash          Boolean  @default(true)
+  acceptDataphone     Boolean  @default(true)
+  
+  // Timestamps
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations (users have access to this tenant)
+  users               User[]
+
+  @@index([subdomain])
+  @@index([status])
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  image         String?
+  role          String    @default("admin") // super_admin, admin, manager, kitchen, delivery
+  
+  // Tenant relation (null for super admins)
+  tenantId      String?
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  // Auth
+  emailVerified DateTime?
+  lastLoginAt   DateTime?
+  
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([email])
+}
+
+// ============================================
+// TENANT SCHEMA - Data per restaurant
+// ============================================
+
+model Category {
+  id        String    @id @default(cuid())
+  tenantId  String
+  name      String
+  icon      String?
+  image     String?
+  order     Int       @default(0)
+  active    Boolean   @default(true)
+  
+  // Relations
+  products  Product[]
+  
+  // Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, active])
+}
+
+model Product {
+  id              String    @id @default(cuid())
+  tenantId        String
+  name            String
+  description     String?
+  price           Decimal   @db.Decimal(10, 2)
+  image           String?
+  
+  // Category relation
+  categoryId      String
+  category        Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  // Availability
+  available       Boolean   @default(true)
+  stock           Int?      // null = unlimited
+  
+  // Preparation
+  preparationTime Int?      // minutes
+  
+  // Modifiers (extras, customizations)
+  modifiers       Json?     // [{ name: "Sin cebolla", price: 0 }, { name: "Extra queso", price: 2000 }]
+  
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, categoryId])
+  @@index([tenantId, available])
+}
+
+model Customer {
+  id              String    @id @default(cuid())
+  tenantId        String
+  whatsappNumber  String
+  name            String
+  email           String?
+  
+  // Addresses (JSON array)
+  addresses       Json?     // [{ street, city, reference, isPrimary }]
+  
+  // Stats
+  totalSpent      Decimal   @default(0) @db.Decimal(10, 2)
+  orderCount      Int       @default(0)
+  isFrequent      Boolean   @default(false)
+  lastOrderAt     DateTime?
+  
+  // Relations
+  orders          Order[]
+  
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, whatsappNumber])
+  @@index([tenantId])
+  @@index([tenantId, isFrequent])
+}
+
+model Order {
+  id              String    @id @default(cuid())
+  tenantId        String
+  orderNumber     String
+  trackingCode    String    @unique @default(cuid())
+  
+  // Customer relation
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id])
+  
+  // Order items (JSON array)
+  items           Json      // [{ productId, name, quantity, unitPrice, modifiers, subtotal }]
+  
+  // Pricing
+  subtotal        Decimal   @db.Decimal(10, 2)
+  deliveryCost    Decimal   @default(0) @db.Decimal(10, 2)
+  discount        Decimal   @default(0) @db.Decimal(10, 2)
+  total           Decimal   @db.Decimal(10, 2)
+  
+  // Status
+  status          String    @default("new") // new, confirmed, preparing, ready, on_way, delivered, cancelled
+  
+  // Payment
+  paymentMethod   String    // nequi_qr, daviplata_qr, bancolombia_qr, wompi, cash, dataphone
+  paymentStatus   String    @default("pending") // pending, confirmed, failed, refunded
+  paymentProofUrl String?   // URL to uploaded payment proof image
+  
+  // Delivery
+  deliveryType    String    @default("delivery") // delivery, pickup
+  deliveryAddress Json?     // { street, city, reference, lat, lng }
+  specialNotes    String?
+  
+  // Timing
+  estimatedTime   Int?      // minutes
+  confirmedAt     DateTime?
+  preparingAt     DateTime?
+  readyAt         DateTime?
+  onWayAt         DateTime?
+  deliveredAt     DateTime?
+  cancelledAt     DateTime?
+  
+  // Delivery person
+  deliveryPersonId String?
+  deliveryPerson   DeliveryPerson? @relation(fields: [deliveryPersonId], references: [id])
+  
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@index([trackingCode])
+}
+
+model DeliveryPerson {
+  id              String    @id @default(cuid())
+  tenantId        String
+  name            String
+  phone           String
+  vehicle         String?   // moto, car, bicycle
+  licensePlate    String?
+  
+  // Status
+  status          String    @default("offline") // available, busy, offline
+  currentLocation Json?     // { lat, lng, updatedAt }
+  
+  // Stats
+  todayDeliveries Int       @default(0)
+  totalDeliveries Int       @default(0)
+  rating          Decimal?  @db.Decimal(3, 2)
+  
+  // Relations
+  orders          Order[]
+  
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+model InventoryItem {
+  id            String    @id @default(cuid())
+  tenantId      String
+  name          String
+  currentStock  Decimal   @db.Decimal(10, 2)
+  minimumStock  Decimal   @db.Decimal(10, 2)
+  unit          String    // kg, litros, unidades
+  cost          Decimal?  @db.Decimal(10, 2)
+  
+  // Status calculated: normal, medium, critical
+  
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId])
+}
+
+model Coupon {
+  id            String    @id @default(cuid())
+  tenantId      String
+  code          String
+  discountType  String    // percentage, fixed_amount
+  discountValue Decimal   @db.Decimal(10, 2)
+  minOrderValue Decimal?  @db.Decimal(10, 2)
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  validFrom     DateTime
+  validUntil    DateTime
+  active        Boolean   @default(true)
+  
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([tenantId, active])
+}
+
+// ============================================
+// WHATSAPP BOT - Conversation state
+// ============================================
+
+model ConversationSession {
+  id            String    @id @default(cuid())
+  tenantId      String
+  whatsappNumber String
+  
+  // State machine
+  state         String    @default("INITIAL") // INITIAL, REGISTRATION, MENU, ORDERING, PAYMENT, AWAITING_PAYMENT, TRACKING
+  registrationStep String? // ASK_NAME, WAIT_NAME, WAIT_EMAIL, WAIT_ADDRESS, WAIT_REFERENCE
+  
+  // Temporary data during conversation
+  tempData      Json?     // { name, email, address, cartItems, selectedPayment, ... }
+  currentOrderId String?
+  
+  // Expiration
+  expiresAt     DateTime
+  
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, whatsappNumber])
+  @@index([tenantId])
+  @@index([expiresAt])
+}
+
+// ============================================
+// SUPER ADMIN - Platform management
+// ============================================
+
+model Invoice {
+  id            String    @id @default(cuid())
+  tenantId      String
+  invoiceNumber String    @unique
+  amount        Decimal   @db.Decimal(10, 2)
+  currency      String    @default("USD")
+  status        String    @default("pending") // pending, paid, overdue, cancelled
+  dueDate       DateTime
+  paidAt        DateTime?
+  
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  tenantId    String?
+  userId      String?
+  action      String
+  entity      String
+  entityId    String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  result      String    @default("success") // success, error, warning
+  
+  // Timestamp
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([createdAt])
+}
