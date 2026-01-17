@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import Link from 'next/link'
 import {
     Building2, User, Mail, Phone, MapPin, Upload, ChevronRight,
-    ChevronLeft, Check, Settings, CreditCard, Utensils
+    ChevronLeft, Check, Settings, CreditCard, Utensils, Lock
 } from 'lucide-react'
 
 // ===== Types =====
@@ -15,6 +15,8 @@ interface FormData {
     businessType: string
     ownerName: string
     email: string
+    password?: string
+    confirmPassword?: string
     phone: string
     address: string
     logo: File | null
@@ -36,6 +38,8 @@ const initialFormData: FormData = {
     businessType: '',
     ownerName: '',
     email: '',
+    password: '',
+    confirmPassword: '',
     phone: '',
     address: '',
     logo: null,
@@ -202,10 +206,38 @@ export default function RegisterPage() {
     }
 
     const handleSubmit = async () => {
+        if (!formData.email || !formData.password) {
+            alert('Por favor completa los campos obligatorios')
+            return
+        }
+
+        if (formData.password !== formData.confirmPassword) {
+            alert('Las contraseñas no coinciden')
+            return
+        }
+
         setIsLoading(true)
-        // TODO: Implement registration logic
-        await new Promise(r => setTimeout(r, 2000))
-        setIsLoading(false)
+        try {
+            const response = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData),
+            })
+
+            const data = await response.json()
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Error en el registro')
+            }
+
+            // Redirect to dashboard or success page
+            window.location.href = '/dashboard'
+        } catch (error: any) {
+            console.error('Registration error:', error)
+            alert(error.message || 'Error al conectar con el servidor')
+        } finally {
+            setIsLoading(false)
+        }
     }
 
     return (
@@ -295,6 +327,43 @@ export default function RegisterPage() {
                                         onChange={(e) => updateField('email', e.target.value)}
                                         placeholder="ejemplo@email.com"
                                         className="input-base input-with-icon"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Password */}
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">
+                                    Contraseña de Acceso
+                                </label>
+                                <div className="relative">
+                                    <Lock className="input-icon" />
+                                    <input
+                                        type="password"
+                                        value={formData.password}
+                                        onChange={(e) => updateField('password', e.target.value)}
+                                        placeholder="Min. 8 caracteres"
+                                        className="input-base input-with-icon"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Confirm Password */}
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">
+                                    Confirmar Contraseña
+                                </label>
+                                <div className="relative">
+                                    <Lock className="input-icon" />
+                                    <input
+                                        type="password"
+                                        value={formData.confirmPassword}
+                                        onChange={(e) => updateField('confirmPassword', e.target.value)}
+                                        placeholder="Repite tu contraseña"
+                                        className="input-base input-with-icon"
+                                        required
                                     />
                                 </div>
                             </div>
