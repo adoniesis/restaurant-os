@@ -195,13 +195,13 @@ export default function RegisterPage() {
 
     const handleNext = () => {
         if (currentStep < 3) {
-            setCurrentStep(prev => prev + 1)
+            setCurrentStep((prev: number) => prev + 1)
         }
     }
 
     const handleBack = () => {
         if (currentStep > 1) {
-            setCurrentStep(prev => prev - 1)
+            setCurrentStep((prev: number) => prev - 1)
         }
     }
 
